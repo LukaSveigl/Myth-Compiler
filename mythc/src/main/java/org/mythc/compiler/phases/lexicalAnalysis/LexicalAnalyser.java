@@ -1,5 +1,6 @@
 package org.mythc.compiler.phases.lexicalAnalysis;
 
+import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
 
@@ -32,7 +33,7 @@ public class LexicalAnalyser implements AutoCloseable {
         this.sourcePath = sourcePath;
         try {
             this.fileReader = new FileReader(sourcePath);
-        } catch (Exception e) {
+        } catch (FileNotFoundException e) {
             CompilerLogger.internalError(LexMessages.openSourceFileFail(sourcePath));
             throw new RuntimeException(e);
         }
@@ -41,7 +42,7 @@ public class LexicalAnalyser implements AutoCloseable {
     public void close() {
         try {
             this.fileReader.close();
-        } catch (Exception e) {
+        } catch (IOException e) {
             CompilerLogger.internalError(LexMessages.closeSourceFileFail(sourcePath));
             throw new RuntimeException(e);
         }
