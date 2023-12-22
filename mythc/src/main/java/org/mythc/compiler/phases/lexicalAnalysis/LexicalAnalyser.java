@@ -1,10 +1,10 @@
 package org.mythc.compiler.phases.lexicalAnalysis;
 
-import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 
 import org.mythc.compiler.common.logging.CompilerLogger;
+import org.mythc.compiler.common.logging.messages.LexMessages;
 import org.mythc.compiler.common.logging.Location;
 import org.mythc.compiler.data.lexicalAnalysis.Token;
 import org.mythc.compiler.data.lexicalAnalysis.Symbol;
@@ -31,9 +31,9 @@ public class LexicalAnalyser implements AutoCloseable {
     public LexicalAnalyser(String sourcePath) {
         this.sourcePath = sourcePath;
         try {
-            this.fileReader = new FileReader(new File(sourcePath));
+            this.fileReader = new FileReader(sourcePath);
         } catch (Exception e) {
-            CompilerLogger.internalError("Failed to open source file: " + sourcePath);
+            CompilerLogger.internalError(LexMessages.openSourceFileFail(sourcePath));
             throw new RuntimeException(e);
         }
     }
@@ -42,7 +42,7 @@ public class LexicalAnalyser implements AutoCloseable {
         try {
             this.fileReader.close();
         } catch (Exception e) {
-            CompilerLogger.internalError("Failed to close source file: " + sourcePath);
+            CompilerLogger.internalError(LexMessages.closeSourceFileFail(sourcePath));
             throw new RuntimeException(e);
         }
     }
@@ -68,27 +68,44 @@ public class LexicalAnalyser implements AutoCloseable {
                 }
             }
 
-            // TODO: Handle EOF
-            return null;
+            Symbol symbol = handleEOF();
+
+            if (CurrentState.inBlockComment)
+                CompilerLogger.warn(LexMessages.UNCLOSED_COMMENT_AT_EOF);
+            if (CurrentState.inString)
+                CompilerLogger.warn(LexMessages.UNCLOSED_STRING_LITERAL);
+
+            return symbol;
         } catch (IOException e) {
-            CompilerLogger.internalError("Failed to read source file: " + sourcePath);
+            CompilerLogger.internalError(LexMessages.readSourceFileFail(sourcePath));
             throw new RuntimeException(e);
         }
     }
 
     private void updateCurrentStateFlags(char character) {
-        if (character == '\\' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) == '\\') {
-            CurrentState.inInlineComment = true;
-        } else if (character == '*' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) == '\\') {
-            CurrentState.inBlockComment = true;
-        } else if (character == '\n') {
-            CurrentState.inInlineComment = false;
-            CurrentState.lexeme = "";
-        } else if (character == '/' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) == '*') {
-            CurrentState.inBlockComment = false;
-            CurrentState.lexeme = "";
-        } else if (character == '"' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) != '\\') {
-            CurrentState.inString = !CurrentState.inString;
+        if (!CurrentState.lexeme.isEmpty()) {
+            if (character == '\\' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) == '\\') {
+                CurrentState.inInlineComment = true;
+            }
+            if (character == '*' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) == '\\') {
+                CurrentState.inBlockComment = true;
+            }
+            if (character == '\n') {
+                CurrentState.inInlineComment = false;
+                CurrentState.lexeme = "";
+            }
+            if (character == '/' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) == '*') {
+                CurrentState.inBlockComment = false;
+                CurrentState.lexeme = "";
+            }
+            if (character == '"' && CurrentState.lexeme.charAt(CurrentState.lexeme.length() - 1) != '\\') {
+                CurrentState.inString = !CurrentState.inString;
+            }
+        } else {
+            // From all the possible states, only the string state can be entered from the empty lexeme.
+            if (character == '"') {
+                CurrentState.inString = !CurrentState.inString;
+            }
         }
     }
 
@@ -115,11 +132,27 @@ public class LexicalAnalyser implements AutoCloseable {
         Token previousToken = matchLexeme(CurrentState.lexeme.substring(0, CurrentState.lexeme.length() - 1));
         Token currentToken = matchLexeme(CurrentState.lexeme);
         if (previousToken != Token.UNKNOWN && currentToken == Token.UNKNOWN) {
-            return new Symbol(CurrentState.lexeme.substring(0, CurrentState.lexeme.length() - 1), previousToken,
+            Symbol symbol = new Symbol(CurrentState.lexeme.substring(0, CurrentState.lexeme.length() - 1), previousToken,
                     new Location(CurrentState.startLine, CurrentState.startColumn, CurrentState.endLine,
                             CurrentState.endColumn));
+            CurrentState.startLine = CurrentState.endLine;
+            CurrentState.startColumn = CurrentState.endColumn;
+            CurrentState.lexeme = CurrentState.lexeme.substring(CurrentState.lexeme.length() - 2);
+            return symbol;
         }
         return null;
+    }
+
+    private Symbol handleEOF() {
+        if (!CurrentState.lexeme.isEmpty()) {
+            Token token = matchLexeme(CurrentState.lexeme);
+            Symbol symbol = new Symbol(CurrentState.lexeme, token,
+                    new Location(CurrentState.startLine, CurrentState.startColumn, CurrentState.endLine,
+                            CurrentState.endColumn));
+            CurrentState.lexeme = "";
+            return symbol;
+        }
+        return new Symbol("", Token.EOF, new Location());
     }
 
     private Token matchLexeme(String lexeme) {
